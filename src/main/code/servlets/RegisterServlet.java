@@ -69,7 +69,7 @@ public class RegisterServlet extends HttpServlet {
             Document documentParsed;
             lock.lock();
             try {
-                documentParsed = builder.parse(inputStream);
+                documentParsed = builder.parse(inputStream); // блокируемся т.к. разные потоки одновременно используют builder для парсинга запроса
             } finally {
                 lock.unlock();
             }
@@ -80,9 +80,10 @@ public class RegisterServlet extends HttpServlet {
             boolean userPresence = checkDbPresence(String.format(QUERY_USER_BY_ID, user1.user_id), dbManager);
             boolean isPasswordCorrect = checkDbPresence(String.format(QUERY_CHECK_USER_PASSWORD, user1.user_id, user1.user_pass), dbManager);
 
+            // обрабатываем запрос в зависимости от его типа
             switch (requestType) {
                 case "CREATE-AGT":
-                    if (!userPresence) {
+                    if (!userPresence) { // проверяем отсутствие добавляемого клиента
                         try (Statement statement = dbManager.getStatement()) {
                             String sql3 = String.format("INSERT INTO user1 VALUES (%d,'%s')", user1.user_id, user1.user_pass);
                             String sql4 = String.format("INSERT INTO user_balance VALUES (%d,%.2f)", user1.user_id, INIT_BALANCE);
@@ -101,7 +102,7 @@ public class RegisterServlet extends HttpServlet {
                     }
                     break;
                 case "GET-BALANCE":
-                    if (userPresence) {
+                    if (userPresence) { // проверяем присутствие клиента, по которому запрашиваем информацию
                         if (!isPasswordCorrect) {
                             code = CODE_PASSWORD_INCORRECT;
                             throw new Exception("Incorrect password");
@@ -113,7 +114,7 @@ public class RegisterServlet extends HttpServlet {
                                 float balance = resultSet.getFloat(1);
                                 resultDocument = generateDocument(CODE_ALL_OK);
                                 status = 200;
-                                Element root = resultDocument.getDocumentElement();
+                                Element root = resultDocument.getDocumentElement(); // формируем документ, в котором будет баланс клиента
                                 Element result1 = resultDocument.createElement("extra");
                                 result1.appendChild(resultDocument.createTextNode(String.valueOf(balance)));
                                 result1.setAttribute("name", "balance");
@@ -136,10 +137,10 @@ public class RegisterServlet extends HttpServlet {
                     throw new Exception("Request type unsupported");
             }
         } catch (Exception e) {
-            resultDocument = generateDocument(code);
+            resultDocument = generateDocument(code); // формируем xml документ с кодом ошибки если что-то пошло не так
             e.printStackTrace();
         } finally {
-            StringWriter writer = generateResponse(resultDocument);
+            StringWriter writer = generateResponse(resultDocument); // формируем ответ на основе созданного xml документа
             resp.setStatus(status);
             resp.setContentType("text/xml");
             resp.getWriter().append(writer.toString());
@@ -147,6 +148,7 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
+    // метод проверки присутствия записи в бд по запросу
     private boolean checkDbPresence(String sql, DBManager dbManager) throws SQLException, ClassNotFoundException, PropertyVetoException {
         PreparedStatement preparedStatement = dbManager.getPreparedStatement(sql);
         try (ResultSet resultSet = dbManager.getResultSet(preparedStatement)) {
@@ -160,6 +162,7 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
+    // метод генерации ответа, который уходит на клиент
     private StringWriter generateResponse(Document document1) {
         if (document1 == null) return new StringWriter().append("Something went wrong, response is null");
         try {
@@ -177,6 +180,7 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
+    // метод генерации xml документа
     private Document generateDocument(byte code) {
         Document document1 = builder.newDocument();
         Element root = document1.createElement("response");
@@ -187,6 +191,7 @@ public class RegisterServlet extends HttpServlet {
         return document1;
     }
 
+    // метод создания объекта user1 на основании запроса
     private User1 createUserFromRequest(NodeList extra) {
         Element element0 = (Element) extra.item(0);
         Element element1 = (Element) extra.item(1);
