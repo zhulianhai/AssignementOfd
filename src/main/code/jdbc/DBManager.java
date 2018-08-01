@@ -11,10 +11,10 @@ public class DBManager {
     private static final String URL = "jdbc:mysql://localhost/sample?user=dbuser&password=12dbuser";
     private static final String DRIVER = "com.mysql.jdbc.Driver";
     private Connection connection;
-    private static int MINIMUM_POOL_SIZE = 100;
-    private static int MAXIMUM_POOL_SIZE = 200;
+    private static int MINIMUM_POOL_SIZE = 40;
+    private static int MAXIMUM_POOL_SIZE = 100;
     private static int INCREMENT_SIZE = 20;
-    private static int MAX_STATEMENTS = 800;
+    private static int MAX_STATEMENTS = 400;
 
     private static ComboPooledDataSource init() {
         try {

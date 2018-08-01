@@ -1,16 +1,16 @@
-package servlets;
+package server;
 
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import jdbc.DBManager;
 import model.User1;
+import org.apache.commons.io.IOUtils;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
-import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -22,17 +22,19 @@ import javax.xml.transform.stream.StreamResult;
 import java.beans.PropertyVetoException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.StringWriter;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Collectors;
 
-@WebServlet("/reg.do")
-public class RegisterServlet extends HttpServlet {
+class HttpServerStandalone implements HttpHandler {
 
     private static final DocumentBuilderFactory builderFactory = DocumentBuilderFactory.newInstance();
     private static final DocumentBuilder builder = initBuilder();
@@ -56,11 +58,20 @@ public class RegisterServlet extends HttpServlet {
         }
     }
 
-    @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+    public static void main(String[] args) throws IOException {
+        InetSocketAddress addr = new InetSocketAddress(8080);
+        HttpServer server = HttpServer.create(addr, 0);
+        server.createContext("/reg.do", new HttpServerStandalone());
+        ThreadFactory threadFactory = Executors.defaultThreadFactory();
+        ThreadPoolExecutor executorPool = new ThreadPoolExecutor(10, 100, 5, TimeUnit.SECONDS, new ArrayBlockingQueue<>(100), threadFactory);
+        server.setExecutor(executorPool);
+        server.start();
+        System.out.println("Server is listening on port 8080");
+    }
+
+    public void handle(HttpExchange exchange) throws IOException {
         DBManager dbManager = new DBManager();
-        String collect = req.getReader().lines().collect(Collectors.joining(System.lineSeparator()));
-        ByteArrayInputStream inputStream = new ByteArrayInputStream(collect.getBytes());
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(IOUtils.toString(exchange.getRequestBody(), StandardCharsets.UTF_8).getBytes());
         Document resultDocument = null;
         short status = 500;
         byte code = CODE_ERROR;
@@ -83,7 +94,7 @@ public class RegisterServlet extends HttpServlet {
                 case "CREATE-AGT":
                     if (!checkDbPresence(String.format(QUERY_USER_BY_ID, user1.user_id), dbManager)) { // проверяем отсутствие добавляемого клиента
                         try (Statement statement = dbManager.getStatement()) {
-                            String sql3 = String.format("INSERT INTO user1 VALUES (%d,'%s')", user1.user_id, user1.user_pass);
+                            String sql3 = String.format("INSERT INTO user1 VALUES (%d,'%s') ", user1.user_id, user1.user_pass);
                             String sql4 = String.format("INSERT INTO user_balance VALUES (%d,%.2f)", user1.user_id, INIT_BALANCE);
                             statement.addBatch(sql3);
                             statement.addBatch(sql4);
@@ -96,7 +107,7 @@ public class RegisterServlet extends HttpServlet {
                         }
                     } else {
                         code = CODE_USER_EXISTS;
-                        throw new Exception("User with such id " + user1.user_id + " is already created");
+                        throw new Exception("User with such id " + user1.user_id + " is already created ");
                     }
                     break;
                 case "GET-BALANCE":
@@ -110,8 +121,8 @@ public class RegisterServlet extends HttpServlet {
                         try (ResultSet resultSet = dbManager.getResultSet(preparedStatement)) {
                             if (resultSet.next()) {
                                 float balance = resultSet.getFloat(1);
-                                resultDocument = generateDocument(CODE_ALL_OK);
                                 status = 200;
+                                resultDocument = generateDocument(CODE_ALL_OK);
                                 Element root = resultDocument.getDocumentElement(); // формируем документ, в котором будет баланс клиента
                                 Element result1 = resultDocument.createElement("extra");
                                 result1.appendChild(resultDocument.createTextNode(String.valueOf(balance)));
@@ -127,7 +138,7 @@ public class RegisterServlet extends HttpServlet {
                         }
                     } else {
                         code = CODE_USER_ABSENT;
-                        throw new Exception("User " + user1.user_id + " doesn't exist");
+                        throw new Exception("User " + user1.user_id + " doesn't exist ");
                     }
                     break;
                 default:
@@ -138,10 +149,14 @@ public class RegisterServlet extends HttpServlet {
             resultDocument = generateDocument(code); // формируем xml документ с кодом ошибки если что-то пошло не так
             e.printStackTrace();
         } finally {
+            Headers responseHeaders = exchange.getResponseHeaders();
             StringWriter writer = generateResponse(resultDocument); // формируем ответ на основе созданного xml документа
-            resp.setStatus(status);
-            resp.setContentType("text/xml");
-            resp.getWriter().append(writer.toString());
+            OutputStream resp = exchange.getResponseBody();
+            exchange.sendResponseHeaders(status, writer.toString().getBytes().length);
+            resp.write(writer.toString().getBytes());
+            responseHeaders.add("Content-Type", "text/xml");
+            resp.close();
+            exchange.close();
             dbManager.shutDownConnection();
         }
     }
@@ -167,8 +182,8 @@ public class RegisterServlet extends HttpServlet {
             TransformerFactory transformerFactory = TransformerFactory.newInstance();
             Transformer transformer;
             transformer = transformerFactory.newTransformer();
-            DOMSource domSource = new DOMSource(document1);
             StringWriter writer = new StringWriter();
+            DOMSource domSource = new DOMSource(document1);
             StreamResult resultSring = new StreamResult(writer);
             transformer.transform(domSource, resultSring);
             return writer;
